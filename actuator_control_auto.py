@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
 
-"""
-자동으로 여러 명령(R10, S110 -10 등)을 순서대로 ESP32(마스터)로 전송하고,
-각 명령의 응답을 화면에 표시하는 예시 코드.
-
-실행:
-    python3 can_master_serial.py
-(포트명, 명령 내용 등을 필요에 맞게 수정)
-"""
+# master : R10, K1, C0.5
+# slaves : S110 P1, D0.5
 
 import serial
 import time

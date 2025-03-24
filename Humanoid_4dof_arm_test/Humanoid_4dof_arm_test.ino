@@ -72,6 +72,8 @@ float Kp = 3.0f;
 float Cd = 0.5f; 
 float max_speed = 60.0f;
 float Kt = 60.0f / (2.0f * PI * 380.0f);  
+float angle_offset = 0.0f;
+
 
 /********************************************************
  * 5) Commander: 직렬 명령 파싱 (마스터에서만 사용)
@@ -153,23 +155,27 @@ void sendParamToSlave(uint32_t slaveID, uint8_t paramID, float value) {
  * 9) Commander 콜백: ref_angle, K_spring, C_damper
  ********************************************************/
 #ifdef IS_MASTER
+// (9-1) 브로드캐스트로 전체 슬레이브 각도 변경
 void doRefAngle(char* cmd) {
   command.scalar(&theta_desired, cmd);  
-  // 브로드캐스트: 0x100 
+  // 브로드캐스트(마스터 ID, 0x100)로 angle 전송 
   sendParamOverCAN(PARAM_ID_REF_ANGLE, theta_desired);
 }
+
+// (9-2) 브로드캐스트로 전체 슬레이브 K 변경
 void doKp(char* cmd) {
   command.scalar(&Kp, cmd);
   sendParamOverCAN(PARAM_ID_KSPRING, Kp);
 }
+
+// (9-3) 브로드캐스트로 전체 슬레이브 C 변경
 void doCd(char* cmd) {
   command.scalar(&Cd, cmd);
   sendParamOverCAN(PARAM_ID_CDAMPER, Cd);
 }
 
 /********************************************************
- * 9-1) 새 콜백: 사용자 입력으로 슬레이브 ID와 ref_angle 모두 지정
- * 
+ * 9-4) 슬레이브별 ref_angle 변경
  * 예: 시리얼에 
  *  S110 10
  * 라고 치면 -> ID=0x110, theta=10.0 rad
@@ -179,30 +185,80 @@ void doSetSlaveAngle(char* cmd) {
   // 첫 번째 토큰: 슬레이브ID(16진)
   // 두 번째 토큰: 목표각(float)
 
-  // 1) 첫 번째 토큰 파싱
   char* token = strtok(cmd, " "); 
   if(token == NULL){
     Serial.println("Usage: S <SlaveID_Hex> <angle>");
     return;
   }
-  // 16진 정수 해석
   uint32_t slaveID = (uint32_t) strtol(token, NULL, 16); 
-  // ex) "110" -> 0x110
-
-  // 2) 두 번째 토큰 파싱
   token = strtok(NULL, " "); 
   if(token == NULL){
     Serial.println("Usage: S <SlaveID_Hex> <angle>");
     return;
   }
-  float angleVal = atof(token); // 문자열 -> float
+  float angleVal = atof(token); 
 
-  // 3) CAN으로 전송
   sendParamToSlave(slaveID, PARAM_ID_REF_ANGLE, angleVal);
   Serial.print("Set slave 0x");
   Serial.print(slaveID, HEX);
   Serial.print(" => ref_angle=");
   Serial.println(angleVal);
+}
+
+/********************************************************
+ * 9-5) 슬레이브별 K 변경
+ * 예: 시리얼에
+ *  P110 3.5
+ * 라고 치면 -> ID=0x110, Kp=3.5
+ ********************************************************/
+void doSetSlaveKp(char* cmd) {
+  // cmd 예) "110 3.5"
+  char* token = strtok(cmd, " "); 
+  if(token == NULL){
+    Serial.println("Usage: P <SlaveID_Hex> <Kp>");
+    return;
+  }
+  uint32_t slaveID = (uint32_t) strtol(token, NULL, 16); 
+  token = strtok(NULL, " "); 
+  if(token == NULL){
+    Serial.println("Usage: P <SlaveID_Hex> <Kp>");
+    return;
+  }
+  float kpVal = atof(token); 
+
+  sendParamToSlave(slaveID, PARAM_ID_KSPRING, kpVal);
+  Serial.print("Set slave 0x");
+  Serial.print(slaveID, HEX);
+  Serial.print(" => Kp=");
+  Serial.println(kpVal);
+}
+
+/********************************************************
+ * 9-6) 슬레이브별 C 변경
+ * 예: 시리얼에
+ *  D120 0.7
+ * 라고 치면 -> ID=0x120, Cd=0.7
+ ********************************************************/
+void doSetSlaveCd(char* cmd) {
+  // cmd 예) "120 0.7"
+  char* token = strtok(cmd, " "); 
+  if(token == NULL){
+    Serial.println("Usage: D <SlaveID_Hex> <Cd>");
+    return;
+  }
+  uint32_t slaveID = (uint32_t) strtol(token, NULL, 16); 
+  token = strtok(NULL, " "); 
+  if(token == NULL){
+    Serial.println("Usage: D <SlaveID_Hex> <Cd>");
+    return;
+  }
+  float cdVal = atof(token); 
+
+  sendParamToSlave(slaveID, PARAM_ID_CDAMPER, cdVal);
+  Serial.print("Set slave 0x");
+  Serial.print(slaveID, HEX);
+  Serial.print(" => Cd=");
+  Serial.println(cdVal);
 }
 #endif
 
@@ -243,7 +299,7 @@ void setup() {
   pinMode(OC_ADJ,OUTPUT);digitalWrite(OC_ADJ,HIGH);
   pinMode(OC_GAIN,OUTPUT);digitalWrite(OC_GAIN,LOW);
 
-  driver.voltage_power_supply = 30;
+  driver.voltage_power_supply = 18;
   driver.pwm_frequency = 15000;
   driver.init();
   motor.linkDriver(&driver);
@@ -279,23 +335,36 @@ void setup() {
 
   motor.init();
   cs.init();
-  cs.gain_a *= -1; cs.gain_b *= -1; cs.gain_c *= -1;
+  // 전류센서 offset 보정
+  cs.gain_a *= -1; 
+  cs.gain_b *= -1; 
+  cs.gain_c *= -1;
   motor.linkCurrentSense(&cs);
 
   motor.initFOC();
 
-#ifdef IS_MASTER
-  // Commander 등록
-  command.add('R', doRefAngle, "ref angle [rad]");
-  command.add('K', doKp,       "Kp [A/rad]");
-  command.add('C', doCd,       "Cd [A/rad]");
+  angle_offset = motor.shaft_angle;  
 
-  // *** 새로 추가된 커맨드 'S' ***
-  command.add('S', doSetSlaveAngle, "S <ID_hex> <angle> : set ref angle for that slave ID");
+
+#ifdef IS_MASTER
+  // Commander 등록 (브로드캐스트)
+  command.add('R', doRefAngle, "ref angle (broadcast) [rad]");
+  command.add('K', doKp,       "Kp (broadcast) [A/rad]");
+  command.add('C', doCd,       "Cd (broadcast) [A/rad]");
+
+  // 슬레이브별 설정
+  command.add('S', doSetSlaveAngle, "S <ID_hex> <angle> : set ref angle for that slave");
+  command.add('P', doSetSlaveKp,    "P <ID_hex> <Kp> : set Kp for that slave");
+  command.add('D', doSetSlaveCd,    "D <ID_hex> <Cd> : set Cd for that slave");
 
   Serial.println("[MASTER] FOC Current-based Torque Control + Multi-Slave example");
-  Serial.println(" - R: set target angle (broadcast) [rad]");
-  Serial.println(" - S: set target angle for a specific slave, ex) 'S110 10' => ID=0x110, angle=10.0");
+  Serial.println("Available commands:");
+  Serial.println(" - R <val> : broadcast angle to all (0x100)");
+  Serial.println(" - K <val> : broadcast K to all (0x100)");
+  Serial.println(" - C <val> : broadcast C to all (0x100)");
+  Serial.println(" - S<SlaveID_hex> <val> : set angle for that slave");
+  Serial.println(" - P<SlaveID_hex> <val> : set K for that slave");
+  Serial.println(" - D<SlaveID_hex> <val> : set C for that slave");
 #else
   Serial.println("[SLAVE] Ready to receive CAN messages for param updates.");
 #endif
@@ -307,17 +376,31 @@ void setup() {
  * 11) loop()
  ********************************************************/
 void loop() {
-  // (A) FOC 루프
+  // ========== 1) FOC 알고리즘 업데이트 ==========
   motor.loopFOC();
 
-  // 간단 임피던스 식
-  float theta  = motor.shaft_angle;
-  float dtheta = motor.shaft_velocity;
-  float Iq_ref = Kp*(theta_desired - theta) - Cd*dtheta;
-  motor.target = Iq_ref;
+  // ========== 2) 현재 위치(shaft_angle)에서 offset 빼서 실제 theta 계산 ==========
+  float raw_theta = motor.shaft_angle;           // 엔코더에서 읽은 값
+  float theta = raw_theta - angle_offset;        // 초기에 읽은 값(각도)을 0으로 만드는 보정
 
-  // (B) FOC 업데이트
+  float dtheta = motor.shaft_velocity;           // 샤프트 속도 (rad/s)
+
+  // ========== 3) 토크 전류 지령 (Iq_ref) 계산 ==========
+  float Iq_ref = Kp * (theta_desired - theta) - Cd * dtheta;
+
+  // 속도 제한(예시)
+  if (fabs(motor.shaft_velocity) > max_speed) {
+    // 필요 시 토크(전류) 제한하는 로직 추가 가능
+  }
+
+  // ========== 4) 모터에 q축 전류 지령 전송 ==========
+  motor.target = Iq_ref; // motor.controller=Torque면 target은 q축 전류[A]
+
+  // ========== 5) FOC 업데이트 (PWM 출력) ==========
   motor.move();
+
+  // ========== 6) 모니터링 ==========
+  motor.monitor();
 
   // (C) Commander (마스터만)
 #ifdef IS_MASTER
@@ -327,6 +410,7 @@ void loop() {
   // (D) CAN 수신
   CANMessage rxFrame;
   while (ACAN_ESP32::can.receive(rxFrame)) {
+    // param 업데이트 프레임인지 체크
     if ((rxFrame.id == PARAM_CAN_ID) && (rxFrame.len == 5)) {
       uint8_t paramID = rxFrame.data[0];
       FloatUnion fu;
@@ -335,6 +419,7 @@ void loop() {
       fu.b[2] = rxFrame.data[3];
       fu.b[3] = rxFrame.data[4];
       float newVal = fu.f;
+
       switch (paramID) {
         case PARAM_ID_REF_ANGLE:
           theta_desired = newVal;
@@ -352,11 +437,12 @@ void loop() {
           Serial.println(Cd);
           break;
         default:
+          Serial.println("[CAN] Unknown param ID");
           break;
       }
     } else {
-      // 다른 메시지이면 로그만
-      Serial.print("Received other CAN frame: ID=0x");
+      // 그 외 메시지 로그
+      Serial.print("Received CAN frame: ID=0x");
       Serial.print(rxFrame.id, HEX);
       Serial.print(", DLC=");
       Serial.print(rxFrame.len);
