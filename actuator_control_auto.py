@@ -9,7 +9,7 @@ import sys
 
 def main():
     # 1) 시리얼 포트 열기
-    port_name = "/dev/ttyUSB0"  # 실제 상황에 맞춰 변경
+    port_name = "/dev/ttyUSB0" # 실제 상황에 맞춰 변경
     baud_rate = 115200
     try:
         ser = serial.Serial(port_name, baud_rate, timeout=0.5)
@@ -21,23 +21,18 @@ def main():
     # 2) 자동 전송할 명령 리스트
     # 필요한 명령을 자유롭게 추가/수정 가능
     positions = [
-        "K1.5",
-        "P110 1.5",
-        "P120 2",
-
-        "C0.5",
-        "D110 0.7",
-        "D120 0.3"
-
-        "R-2",
-        "S120 0",       # 예: 모든 슬레이브(브로드캐스트) ref angle=10
-        "S110 -5",  # 예: 슬레이브 0x110에 angle=-10
-        "R-20",
-        "S120 15",
-        "S110 10",
-        "S120 0",
-        "R-2",
-        "S110 -5"
+        "1r-7",
+        "2r0",
+        "3r0",
+        "4r8",
+        "1r0",
+        "2r-5",
+        "3r10",
+        "4r0",
+        "1r-7",
+        "2r0",
+        "3r0",
+        "4r8",
     ]
 
     # 3) 순차적으로 명령 전송
@@ -66,7 +61,7 @@ def main():
                 print("<< (no response)")
 
             # 명령 사이 간격 (필요시 변경)
-            time.sleep(0.05)
+            time.sleep(0.1)
 
     except KeyboardInterrupt:
         print("\nInterrupted by user.")

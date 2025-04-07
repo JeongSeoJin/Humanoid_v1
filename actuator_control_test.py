@@ -21,7 +21,7 @@ import sys
 
 def main():
     # 1) 시리얼 포트 열기
-    port_name = "/dev/ttyUSB0"  # 실제 상황에 맞춰 변경
+    port_name = "/dev/ttyUSB1"# 실제 상황에 맞춰 변경
     baud_rate = 115200
     try:
         ser = serial.Serial(port_name, baud_rate, timeout=0.5)
